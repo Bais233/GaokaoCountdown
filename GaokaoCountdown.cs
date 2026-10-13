@@ -471,7 +471,7 @@ public class CountdownForm : Form
             string icoPath = Path.Combine(ExeDir, "app.ico");
             if (File.Exists(icoPath))
             {
-                return new Icon(icoPath);
+                return new Icon(icoPath, SystemInformation.SmallIconSize); // 托盘用小尺寸，避免缩放模糊
             }
         }
         catch { }
