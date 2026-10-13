@@ -107,6 +107,17 @@ public class CountdownForm : Form
         };
     }
 
+    // 不出现在 Alt+Tab 切换列表（WS_EX_TOOLWINDOW）
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            CreateParams cp = base.CreateParams;
+            cp.ExStyle |= 0x80; // WS_EX_TOOLWINDOW
+            return cp;
+        }
+    }
+
     private void BuildFont()
     {
         Font newFont = LoadCustomFont(fontSize);
