@@ -466,6 +466,16 @@ public class CountdownForm : Form
 
     private Icon BuildTrayIcon()
     {
+        try
+        {
+            string icoPath = Path.Combine(ExeDir, "app.ico");
+            if (File.Exists(icoPath))
+            {
+                return new Icon(icoPath);
+            }
+        }
+        catch { }
+        // 兑底：手画 D 字图标
         using (Bitmap bmp = new Bitmap(16, 16))
         {
             using (Graphics g = Graphics.FromImage(bmp))

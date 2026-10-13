@@ -13,3 +13,6 @@ shot.png
 settings.txt
 position.txt
 *.log
+
+MakeIcon.exe
+icon_preview.png
