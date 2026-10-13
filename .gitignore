@@ -1,0 +1,15 @@
+# Catime 参考源码（非本项目代码，不纳入仓库）
+catime_src/
+catime_src.zip
+catime_guide.html
+
+# 开发动助
+_preview.cs
+Screenshot.cs
+Screenshot.exe
+shot.png
+
+# 运行时刑井
+settings.txt
+position.txt
+*.log
