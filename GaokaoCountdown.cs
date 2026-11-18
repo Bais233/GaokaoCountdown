@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Drawing.Text;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -17,8 +18,10 @@ internal sealed class CountdownForm : Form
 
     private static readonly string ExeDir = AppDomain.CurrentDomain.BaseDirectory;
     private static readonly string FontsDir = Path.Combine(ExeDir, "fonts");
-    private static readonly string TtfPath = Path.Combine(ExeDir, "Terminess.ttf");
-    private static readonly string IconPath = Path.Combine(ExeDir, "app.ico");
+
+    // 默认字体和托盘图标编进 exe（csc /resource:），运行时不需要任何附带文件
+    private const string FontResource = "Terminess.ttf";
+    private const string IconResource = "app.ico";
 
     // 设置放 %APPDATA%：exe 在 Program Files 或移动文件夹后仍能保存
     private static readonly string DataDir = Path.Combine(
@@ -76,6 +79,7 @@ internal sealed class CountdownForm : Form
     private readonly Random rng = new Random();
 
     private static PrivateFontCollection defaultFonts;
+    private static IntPtr fontBuffer;                  // AddMemoryFont 用的非托管内存，常驻不释放
     private static readonly Dictionary<string, PrivateFontCollection> fileFonts =
         new Dictionary<string, PrivateFontCollection>();
 
@@ -295,19 +299,40 @@ internal sealed class CountdownForm : Form
                     return new Font(GetFileFonts(path).Families[0], size, FontStyle.Regular);
             }
 
-            if (File.Exists(TtfPath))
-                return new Font(GetDefaultFonts().Families[0], size, FontStyle.Regular);
+            PrivateFontCollection builtin = GetDefaultFonts();
+            if (builtin != null)
+                return new Font(builtin.Families[0], size, FontStyle.Regular);
         }
         catch { }
         return new Font("Consolas", size, FontStyle.Bold);   // 兜底
+    }
+
+    // 编进 exe 的资源：读成字节数组（字体要用非托管内存喂 AddMemoryFont）
+    private static byte[] ReadResource(string name)
+    {
+        using (Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream(name))
+        {
+            if (s == null) return null;
+            using (MemoryStream ms = new MemoryStream())
+            {
+                s.CopyTo(ms);
+                return ms.ToArray();
+            }
+        }
     }
 
     private static PrivateFontCollection GetDefaultFonts()
     {
         if (defaultFonts == null)
         {
+            byte[] data = ReadResource(FontResource);
+            if (data == null) return null;
+
             defaultFonts = new PrivateFontCollection();
-            defaultFonts.AddFontFile(TtfPath);
+            // AddMemoryFont 要求这块内存一直有效，所以放在非托管堆且不释放（进程生命周期内就一份）
+            fontBuffer = Marshal.AllocHGlobal(data.Length);
+            Marshal.Copy(data, 0, fontBuffer, data.Length);
+            defaultFonts.AddMemoryFont(fontBuffer, data.Length);
         }
         return defaultFonts;
     }
@@ -590,11 +615,16 @@ internal sealed class CountdownForm : Form
 
     private Icon LoadIcon()
     {
-        try
+        byte[] ico = ReadResource(IconResource);
+        if (ico != null)
         {
-            if (File.Exists(IconPath)) return new Icon(IconPath, SystemInformation.SmallIconSize);
+            try
+            {
+                using (MemoryStream ms = new MemoryStream(ico))
+                    return new Icon(ms, SystemInformation.SmallIconSize);   // 托盘按小尺寸取帧，避免缩放糊
+            }
+            catch { }
         }
-        catch { }
         try { return Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
         catch { }
         return SystemIcons.Application;
