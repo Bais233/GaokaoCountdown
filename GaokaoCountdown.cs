@@ -202,12 +202,21 @@ internal sealed class CountdownForm : Form
         return specialDay ? s + "!" : s;
     }
 
+    // 量尺寸前把数字统一换成 8：比例字体每秒数字宽度不同，否则窗口会逐秒抖动、也会打断菜单
+    private static string WidthProbe(string s)
+    {
+        char[] chars = s.ToCharArray();
+        for (int i = 0; i < chars.Length; i++)
+            if (chars[i] >= '0' && chars[i] <= '9') chars[i] = '8';
+        return new string(chars);
+    }
+
     // 窗口尺寸按当前文字实测，文字变化时才调用，避免每秒抖动
     private void FitToText(string s)
     {
         if (font == null) return;
         SizeF size;
-        using (Graphics g = CreateGraphics()) size = g.MeasureString(s, font);
+        using (Graphics g = CreateGraphics()) size = g.MeasureString(WidthProbe(s), font);
         int w = (int)Math.Ceiling(size.Width) + 16;
         int h = (int)Math.Ceiling(size.Height) + 6;
         if (w != Width || h != Height) SetBounds(Left, Top, w, h);
@@ -229,6 +238,7 @@ internal sealed class CountdownForm : Form
 
         Color color;
         if (rainbow) color = HslToRgb((DateTime.Now.Ticks / 4000) % 360, 0.9f, 0.65f);
+        else if (previewColor >= 0) color = Palette[previewColor];   // 悬停预览优先于特殊天数变色
         else if (examDay) color = Color.FromArgb(255, 60, 60);
         else if (specialDay) color = Color.FromArgb(255, 80, 80);
         else color = Palette[colorIndex];
@@ -288,13 +298,19 @@ internal sealed class CountdownForm : Form
     // ===== 字体 =====
     private Font CreateFont(float size)
     {
+        return CreateFont(size, fontMode, systemFontName, fontFile);
+    }
+
+    // 显式传参版本：悬停预览要按“候选值”造字体，不能改已保存的设置
+    private Font CreateFont(float size, int mode, string systemName, string file)
+    {
         try
         {
-            if (fontMode == 1) return new Font(systemFontName, size, FontStyle.Bold);
+            if (mode == 1) return new Font(systemName, size, FontStyle.Bold);
 
-            if (fontMode == 2 && fontFile.Length > 0)
+            if (mode == 2 && !string.IsNullOrEmpty(file))
             {
-                string path = Path.Combine(FontsDir, fontFile);
+                string path = Path.Combine(FontsDir, file);
                 if (File.Exists(path))
                     return new Font(GetFileFonts(path).Families[0], size, FontStyle.Regular);
             }
@@ -361,6 +377,37 @@ internal sealed class CountdownForm : Form
         text = ComposeText();
         FitToText(text);
         Invalidate();
+    }
+
+    // ===== 悬停预览：鼠标划过菜单选项时临时套用，移开/关菜单即还原，不写设置 =====
+    private int previewColor = -1;
+    private bool hasPreview;
+
+    private void PreviewColor(int index)
+    {
+        previewColor = index;
+        hasPreview = true;
+        Invalidate();
+    }
+
+    private void PreviewFont(int mode, string systemName, string file, float size)
+    {
+        Font next = CreateFont(size, mode, systemName, file);
+        Font old = font;
+        font = next;
+        if (old != null) old.Dispose();
+
+        hasPreview = true;
+        FitToText(text);
+        Invalidate();
+    }
+
+    private void ClearPreview()
+    {
+        if (!hasPreview) return;
+        hasPreview = false;
+        previewColor = -1;
+        BuildFont();                 // 按已保存的设置重建字体和窗口尺寸
     }
 
     // ===== 鼠标 =====
@@ -446,7 +493,8 @@ internal sealed class CountdownForm : Form
         for (int i = 0; i < Palette.Length; i++)
         {
             int idx = i;
-            Add(colors, PaletteNames[i], "color:" + i, () => { colorIndex = idx; SaveAndRefresh(); });
+            Hover(Add(colors, PaletteNames[i], "color:" + i, () => { colorIndex = idx; SaveAndRefresh(); }),
+                  () => PreviewColor(idx));
         }
         menu.Items.Add(colors);
 
@@ -459,12 +507,13 @@ internal sealed class CountdownForm : Form
         for (int i = 0; i < SizePresets.Length; i++)
         {
             int idx = i;
-            Add(sizes, SizePresetNames[i], "size:" + i, () =>
-            {
-                fontSize = SizePresets[idx];
-                BuildFont();
-                SaveAndRefresh();
-            });
+            Hover(Add(sizes, SizePresetNames[i], "size:" + i, () =>
+                  {
+                      fontSize = SizePresets[idx];
+                      BuildFont();
+                      SaveAndRefresh();
+                  }),
+                  () => PreviewFont(fontMode, systemFontName, fontFile, SizePresets[idx]));
         }
         menu.Items.Add(sizes);
 
@@ -478,7 +527,16 @@ internal sealed class CountdownForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("退出", null, (s, e) => Close()));
 
+        menu.Closed += (s, e) => ClearPreview();   // 菜单关掉兜底还原
         RefreshChecks();
+    }
+
+    // 悬停预览绑定：进入时套用候选值，离开时还原
+    private ToolStripMenuItem Hover(ToolStripMenuItem item, Action enter)
+    {
+        item.MouseEnter += (s, e) => enter();
+        item.MouseLeave += (s, e) => ClearPreview();
+        return item;
     }
 
     private ToolStripMenuItem Add(string label, string tag, Action click)
@@ -508,7 +566,8 @@ internal sealed class CountdownForm : Form
     {
         fonts.DropDownItems.Clear();
 
-        Add(fonts, "默认 (Catime Terminess)", "font0", () => { fontMode = 0; BuildFont(); SaveAndRefresh(); });
+        Hover(Add(fonts, "默认 (Catime Terminess)", "font0", () => { fontMode = 0; BuildFont(); SaveAndRefresh(); }),
+              () => PreviewFont(0, systemFontName, fontFile, fontSize));
         Add(fonts, "选择系统字体...", "font1", PickSystemFont);
 
         try
@@ -528,13 +587,14 @@ internal sealed class CountdownForm : Form
                     if (name.Equals("Terminess.ttf", StringComparison.OrdinalIgnoreCase)) continue;
                     found = true;
                     string captured = name;
-                    Add(fonts, Shorten(name), "fontfile:" + name, () =>
-                    {
-                        fontFile = captured;
-                        fontMode = 2;
-                        BuildFont();
-                        SaveAndRefresh();
-                    });
+                    Hover(Add(fonts, Shorten(name), "fontfile:" + name, () =>
+                          {
+                              fontFile = captured;
+                              fontMode = 2;
+                              BuildFont();
+                              SaveAndRefresh();
+                          }),
+                          () => PreviewFont(2, systemFontName, captured, fontSize));
                 }
             }
             if (!found) AddHint(fonts, "（把 .ttf/.otf 放进程序目录的 fonts 文件夹）");
